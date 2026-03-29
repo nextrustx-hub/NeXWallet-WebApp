@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 import { AppHeader } from "./app-header";
 import { AppFooter } from "./app-footer";
+import { TradingViewTicker } from "./ticker";
 import { SupportButton } from "@/components/support-button";
 import { useNavigation } from "@/stores/navigation-store";
 import { DashboardPage } from "@/components/pages/dashboard-page";
@@ -14,6 +15,9 @@ import { PaymentLinksPage } from "@/components/pages/payment-links-page";
 import { DevelopersPage } from "@/components/pages/developers-page";
 import { SecurityPage } from "@/components/pages/security-page";
 import { CheckoutPage } from "@/components/pages/checkout-page";
+
+// Force Next.js to detect this module
+void TradingViewTicker;
 
 function PageLoader() {
   return (
@@ -50,8 +54,9 @@ export function AppLayout() {
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset className="flex flex-col">
+      <SidebarInset className="flex flex-col min-h-0">
         <AppHeader />
+        <TradingViewTicker />
         <main className="flex-1 p-4 md:p-6 overflow-auto">
           <Suspense fallback={<PageLoader />}>
             <PageRouter />

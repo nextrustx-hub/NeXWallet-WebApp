@@ -23,16 +23,19 @@ import {
   Coins,
   ArrowDownToLine,
   ArrowUpFromLine,
-  ArrowDownUp,
+  ArrowLeftRight,
   Receipt,
+  History,
 } from "lucide-react";
 import { api, Transaction, BalanceData } from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/auth-context";
 import { DepositModal } from "@/components/deposit/deposit-modal";
+import { WithdrawModal } from "@/components/withdraw/withdraw-modal";
 import { useNavigation } from "@/stores/navigation-store";
 
-// Formatting helpers
+// ─── Formatting helpers ────────────────────────────────────────────────
+
 const formatBRL = (v: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
@@ -53,27 +56,84 @@ const formatDate = (d: string) =>
     minute: "2-digit",
   });
 
-const statusVariant = (s: string) =>
-  s === "completed" ? "default" : s === "pending" ? "secondary" : "destructive";
+// ─── Status helpers ────────────────────────────────────────────────────
 
-const statusLabel = (s: string) =>
-  ({ completed: "Concluído", pending: "Pendente", failed: "Falhou", rejected: "Rejeitado" })[s] || s;
-
-const amountForDisplay = (tx: Transaction) => {
-  const abs = Math.abs(tx.amount);
-  if (tx.currency === "BRL") return formatBRL(abs);
-  if (tx.currency === "EUR") return formatEUR(abs);
-  if (tx.currency === "USDT") return `${formatCrypto(abs)} USDT`;
-  if (tx.currency === "BTC") return `${formatCrypto(abs)} BTC`;
-  return abs.toString();
+const statusVariant = (s: string) => {
+  if (s === "completed") return "default";
+  if (s === "pending") return "secondary";
+  if (s === "failed" || s === "rejected") return "destructive";
+  return "outline";
 };
 
+const statusLabel = (s: string) => {
+  const labels: Record<string, string> = {
+    completed: "Concluído",
+    pending: "Pendente",
+    failed: "Falhou",
+    rejected: "Rejeitado",
+    processing: "Processando",
+  };
+  return labels[s] || s;
+};
+
+// ─── Transaction type / method labels ──────────────────────────────────
+
+const typeLabel = (t: string) => {
+  const labels: Record<string, string> = {
+    deposit: "Depósito",
+    withdrawal: "Saque",
+    swap: "Conversão",
+    transfer: "Transferência",
+  };
+  return labels[t] || t;
+};
+
+const methodLabel = (m: string) => {
+  const labels: Record<string, string> = {
+    pix: "PIX",
+    sepa: "SEPA",
+    usdttrc20: "USDT TRC-20",
+    usdtbep20: "USDT BEP-20",
+    usdterc20: "USDT ERC-20",
+    crypto: "Cripto",
+    bank_transfer: "Transferência Bancária",
+  };
+  return labels[m.toLowerCase()] || m;
+};
+
+const amountForDisplay = (tx: Transaction) => {
+  const amount = parseFloat(tx.amount_from) || 0;
+  const abs = Math.abs(amount);
+  const currency = tx.currency_from;
+
+  if (currency === "BRL") return formatBRL(abs);
+  if (currency === "EUR") return formatEUR(abs);
+  return `${formatCrypto(abs)} ${currency}`;
+};
+
+const typeIcon = (t: string) => {
+  if (t === "deposit") return ArrowDownToLine;
+  if (t === "withdrawal") return ArrowUpFromLine;
+  if (t === "swap") return ArrowLeftRight;
+  return Receipt;
+};
+
+const isPositive = (t: string) => t === "deposit";
+
+// ─── Component ─────────────────────────────────────────────────────────
+
 export function DashboardPage() {
-  const [balance, setBalance] = useState<BalanceData>({ BRL: 0, EUR: 0, USDT: 0, BTC: 0 });
+  const [balance, setBalance] = useState<BalanceData>({
+    BRL: 0,
+    EUR: 0,
+    USDT: 0,
+    BTC: 0,
+  });
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [depositOpen, setDepositOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
   const { navigate } = useNavigation();
   const { user } = useAuth();
 
@@ -81,7 +141,11 @@ export function DashboardPage() {
   useEffect(() => {
     api
       .getBalance()
-      .then((res) => setBalance(res.data))
+      .then((res) => {
+        if (res.balances) {
+          setBalance(res.balances);
+        }
+      })
       .catch((err) => toast.error(err.message))
       .finally(() => setBalanceLoading(false));
   }, []);
@@ -90,7 +154,11 @@ export function DashboardPage() {
   useEffect(() => {
     api
       .getTransactions({ limit: 5 })
-      .then((res) => setTransactions(res.data))
+      .then((res) => {
+        if (res.data?.transactions) {
+          setTransactions(res.data.transactions);
+        }
+      })
       .catch((err) => toast.error(err.message))
       .finally(() => setTxLoading(false));
   }, []);
@@ -104,18 +172,12 @@ export function DashboardPage() {
     },
     {
       icon: ArrowUpFromLine,
-      label: "Enviar",
-      onClick: () => {},
-      disabled: true,
+      label: "Sacar",
+      onClick: () => setWithdrawOpen(true),
+      disabled: false,
     },
     {
-      icon: Receipt,
-      label: "Receber",
-      onClick: () => {},
-      disabled: true,
-    },
-    {
-      icon: ArrowDownUp,
+      icon: ArrowLeftRight,
       label: "Exchange",
       onClick: () => navigate("exchange"),
       disabled: false,
@@ -216,7 +278,7 @@ export function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {quickActions.map((action) => (
           <Button
             key={action.label}
@@ -233,8 +295,17 @@ export function DashboardPage() {
 
       {/* Recent Transactions */}
       <Card className="hover:shadow-md transition-shadow py-4">
-        <CardHeader className="pb-0">
+        <CardHeader className="pb-0 flex flex-row items-center justify-between">
           <CardTitle className="text-base">Transações Recentes</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => navigate("transactions")}
+          >
+            <History className="size-3.5 mr-1" />
+            Ver todas
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="max-h-96 overflow-y-auto">
@@ -242,7 +313,7 @@ export function DashboardPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Data</TableHead>
-                  <TableHead>Descrição</TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead className="text-right">Valor</TableHead>
                   <TableHead className="text-right">Status</TableHead>
                 </TableRow>
@@ -251,44 +322,70 @@ export function DashboardPage() {
                 {txLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={`skel-${i}`}>
-                      <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-36" /></TableCell>
-                      <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
-                      <TableCell className="text-right"><Skeleton className="h-5 w-16 ml-auto" /></TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-24" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-28" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Skeleton className="h-4 w-20 ml-auto" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Skeleton className="h-5 w-16 ml-auto" />
+                      </TableCell>
                     </TableRow>
                   ))
                 ) : transactions.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    <TableCell
+                      colSpan={4}
+                      className="text-center text-muted-foreground py-8"
+                    >
                       Nenhuma transação encontrada
                     </TableCell>
                   </TableRow>
                 ) : (
-                  transactions.map((tx) => (
-                    <TableRow key={tx.id}>
-                      <TableCell className="text-muted-foreground text-xs">
-                        {formatDate(tx.createdAt)}
-                      </TableCell>
-                      <TableCell className="font-medium text-sm">
-                        {tx.description}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right text-sm font-semibold ${
-                          tx.amount >= 0
-                            ? "text-emerald-500"
-                            : "text-red-500"
-                        }`}
-                      >
-                        {tx.amount >= 0 ? "+" : ""}
-                        {amountForDisplay(tx)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={statusVariant(tx.status)}>
-                          {statusLabel(tx.status)}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  transactions.map((tx) => {
+                    const positive = isPositive(tx.type);
+                    const Icon = typeIcon(tx.type);
+                    return (
+                      <TableRow key={tx.id}>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {formatDate(tx.created_at)}
+                        </TableCell>
+                        <TableCell className="font-medium text-sm">
+                          <div className="flex items-center gap-2">
+                            <Icon className="size-3.5 text-muted-foreground shrink-0" />
+                            <span>
+                              {typeLabel(tx.type)}
+                              {tx.method && (
+                                <span className="text-muted-foreground">
+                                  {" "}
+                                  · {methodLabel(tx.method)}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell
+                          className={`text-right text-sm font-semibold ${
+                            positive
+                              ? "text-emerald-500"
+                              : "text-red-500"
+                          }`}
+                        >
+                          {positive ? "+" : "-"}
+                          {amountForDisplay(tx)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={statusVariant(tx.status)}>
+                            {statusLabel(tx.status)}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -298,6 +395,8 @@ export function DashboardPage() {
 
       {/* Deposit Modal */}
       <DepositModal open={depositOpen} onOpenChange={setDepositOpen} />
+      {/* Withdraw Modal */}
+      <WithdrawModal open={withdrawOpen} onOpenChange={setWithdrawOpen} />
     </div>
   );
 }

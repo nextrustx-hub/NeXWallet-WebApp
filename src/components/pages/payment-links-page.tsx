@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Card,
@@ -37,6 +37,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   Copy,
@@ -45,11 +46,13 @@ import {
   ExternalLink,
   Trash2,
   Loader2,
+  CircleDollarSign,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { CheckoutLink } from "@/lib/api";
+import type { CheckoutListItem } from "@/lib/api";
 import { useNavigation } from "@/stores/navigation-store";
-import { Textarea } from "@/components/ui/textarea";
+
+const CHECKOUT_BASE_URL = "https://app.nexpay.digital/c";
 
 const formatCurrency = (amount: number, currency: string) =>
   new Intl.NumberFormat("pt-BR", {
@@ -57,277 +60,357 @@ const formatCurrency = (amount: number, currency: string) =>
     currency,
   }).format(amount);
 
-const formatDate = (d: string) =>
-  new Date(d).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-
 export function PaymentLinksPage() {
   const { openCheckout } = useNavigation();
-  const [links, setLinks] = useState<CheckoutLink[]>([]);
+
+  const [links, setLinks] = useState<CheckoutListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Form state
-  const [newTitle, setNewTitle] = useState("");
-  const [newDescription, setNewDescription] = useState("");
-  const [newCurrency, setNewCurrency] = useState("BRL");
-  const [newAmount, setNewAmount] = useState("");
+  const [formTitle, setFormTitle] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formCurrency, setFormCurrency] = useState<"BRL" | "EUR">("BRL");
+  const [formAmount, setFormAmount] = useState("");
 
-  // Load checkout links on mount
-  useEffect(() => {
+  const resetForm = useCallback(() => {
+    setFormTitle("");
+    setFormDescription("");
+    setFormCurrency("BRL");
+    setFormAmount("");
+  }, []);
+
+  const loadLinks = useCallback(() => {
+    setLoading(true);
     api
       .listCheckoutLinks()
       .then((res) => setLinks(res.data))
-      .catch(() => toast.error("Erro ao carregar links de pagamento"))
+      .catch(() => toast.error("Erro ao carregar links de pagamento."))
       .finally(() => setLoading(false));
   }, []);
 
-  const handleCreateLink = async () => {
-    if (!newTitle.trim() || !newAmount) return;
+  useEffect(() => {
+    loadLinks();
+  }, [loadLinks]);
+
+  const handleCreate = async () => {
+    if (!formTitle.trim() || !formAmount || parseFloat(formAmount) <= 0) return;
+
     setCreating(true);
     try {
       const res = await api.createCheckoutLink({
-        title: newTitle.trim(),
-        description: newDescription.trim(),
-        currency: newCurrency as "BRL" | "EUR",
-        amount: parseFloat(newAmount),
+        title: formTitle.trim(),
+        description: formDescription.trim() || undefined,
+        amount: parseFloat(formAmount),
+        currency: formCurrency,
       });
-      setLinks((prev) => [res.data, ...prev]);
+
+      // Prepend the new link to the list using the response data
+      const newLink: CheckoutListItem = {
+        id: res.checkout_id,
+        title: formTitle.trim(),
+        amount: parseFloat(formAmount),
+        status: "active",
+      };
+      setLinks((prev) => [newLink, ...prev]);
+
       setDialogOpen(false);
-      setNewTitle("");
-      setNewDescription("");
-      setNewCurrency("BRL");
-      setNewAmount("");
-      toast.success("Link criado com sucesso!");
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao criar link");
+      resetForm();
+      toast.success("Link de pagamento criado com sucesso!");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erro ao criar link de pagamento.";
+      toast.error(message);
     } finally {
       setCreating(false);
     }
   };
 
-  const handleCopyLink = (shortId: string) => {
-    const url = `https://wallet.nextrustx.com/c/${shortId}`;
-    navigator.clipboard.writeText(url);
-    setCopiedId(shortId);
-    toast.success("Link copiado!");
-    setTimeout(() => setCopiedId(null), 2000);
+  const handleCopyUrl = (id: string) => {
+    const url = `${CHECKOUT_BASE_URL}/${id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedId(id);
+      toast.success("URL copiada para a área de transferência!");
+      setTimeout(() => setCopiedId(null), 2500);
+    });
   };
 
-  const handleDeleteLink = (id: string) => {
-    setLinks((prev) => prev.filter((l) => l.id !== id));
-    toast.success("Link removido!");
+  const handleDelete = (id: string) => {
+    setLinks((prev) => prev.filter((link) => link.id !== id));
+    toast.success("Link removido com sucesso.");
+  };
+
+  const getStatusBadge = (status: string) => {
+    const map: Record<string, { label: string; className: string }> = {
+      active: {
+        label: "Ativo",
+        className:
+          "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/10",
+      },
+      expired: {
+        label: "Expirado",
+        className:
+          "bg-amber-500/10 text-amber-600 border-amber-500/20 hover:bg-amber-500/10",
+      },
+      paid: {
+        label: "Pago",
+        className:
+          "bg-blue-500/10 text-blue-600 border-blue-500/20 hover:bg-blue-500/10",
+      },
+      cancelled: {
+        label: "Cancelado",
+        className:
+          "bg-red-500/10 text-red-600 border-red-500/20 hover:bg-red-500/10",
+      },
+    };
+    const entry = map[status] ?? { label: status, className: "" };
+    return (
+      <Badge variant="secondary" className={entry.className}>
+        {entry.label}
+      </Badge>
+    );
   };
 
   return (
     <div className="space-y-6">
+      {/* Page Header Card */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <div className="space-y-1">
             <CardTitle className="text-xl flex items-center gap-2">
-              <Link2 className="h-5 w-5" />
+              <Link2 className="h-5 w-5 text-emerald-500" />
               Links de Pagamento
             </CardTitle>
             <CardDescription>
-              Crie e gerencie links de pagamento para seus clientes
+              Crie e gerencie links de pagamento para receber de seus clientes
             </CardDescription>
           </div>
-          <Button onClick={() => setDialogOpen(true)}>
+          <Button
+            onClick={() => setDialogOpen(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
             <Plus className="h-4 w-4 mr-2" />
-            Novo Link
+            Criar Link de Pagamento
           </Button>
         </CardHeader>
+      </Card>
+
+      {/* Links Table Card */}
+      <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Link</TableHead>
-                <TableHead>Valor</TableHead>
-                <TableHead>Moeda</TableHead>
-                <TableHead>Pagamentos</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Criado em</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 4 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell>
-                      <div className="space-y-1">
-                        <Skeleton className="h-4 w-32" />
-                        <Skeleton className="h-3 w-16" />
+          <div className="max-h-[520px] overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="sticky top-0 bg-card z-10">
+                  <TableHead>Link</TableHead>
+                  <TableHead>Valor</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>URL</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={i}>
+                      <TableCell>
+                        <div className="space-y-1.5">
+                          <Skeleton className="h-4 w-36" />
+                          <Skeleton className="h-3 w-24" />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-24" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-5 w-16" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-48" />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <Skeleton className="h-8 w-8" />
+                          <Skeleton className="h-8 w-8" />
+                          <Skeleton className="h-8 w-8" />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : links.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-48">
+                      <div className="flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                        <CircleDollarSign className="h-10 w-10 opacity-30" />
+                        <p className="text-sm font-medium">
+                          Nenhum link de pagamento encontrado
+                        </p>
+                        <p className="text-xs">
+                          Clique em &quot;Criar Link de Pagamento&quot; para começar a receber
+                        </p>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-4 w-20" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-5 w-14" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-4 w-8" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-5 w-14" />
-                    </TableCell>
-                    <TableCell>
-                      <Skeleton className="h-4 w-24" />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Skeleton className="h-8 w-20 ml-auto" />
-                    </TableCell>
                   </TableRow>
-                ))
-              ) : (
-                <>
-                  {links.map((link) => (
+                ) : (
+                  links.map((link) => (
                     <TableRow key={link.id}>
+                      {/* Link column: title + id */}
                       <TableCell>
                         <div>
-                          <p className="font-medium">{link.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {link.shortId}
+                          <p className="font-medium text-sm">{link.title}</p>
+                          <p className="text-xs text-muted-foreground font-mono">
+                            {link.id}
                           </p>
                         </div>
                       </TableCell>
+
+                      {/* Valor */}
                       <TableCell className="font-medium">
-                        {formatCurrency(link.amount, link.currency)}
+                        {formatCurrency(link.amount, "BRL")}
                       </TableCell>
+
+                      {/* Status */}
+                      <TableCell>{getStatusBadge(link.status)}</TableCell>
+
+                      {/* URL preview */}
                       <TableCell>
-                        <Badge variant="outline">{link.currency}</Badge>
+                        <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                          {CHECKOUT_BASE_URL}/{link.id}
+                        </code>
                       </TableCell>
-                      <TableCell>{link.paymentsCount ?? 0}</TableCell>
+
+                      {/* Actions */}
                       <TableCell>
-                        <Badge
-                          variant="secondary"
-                          className={
-                            link.status === "active"
-                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/10"
-                              : ""
-                          }
-                        >
-                          {link.status === "active" ? "Ativo" : "Expirado"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{formatDate(link.createdAt)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             variant="ghost"
-                            size="icon"
-                            onClick={() => handleCopyLink(link.shortId)}
+                            size="sm"
+                            onClick={() => handleCopyUrl(link.id)}
+                            className="h-8 gap-1.5 text-xs"
                           >
-                            {copiedId === link.shortId ? (
-                              <Check className="h-4 w-4 text-emerald-500" />
+                            {copiedId === link.id ? (
+                              <Check className="h-3.5 w-3.5 text-emerald-500" />
                             ) : (
-                              <Copy className="h-4 w-4" />
+                              <Copy className="h-3.5 w-3.5" />
                             )}
+                            {copiedId === link.id ? "Copiado" : "Copiar URL"}
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
+                            className="h-8 w-8"
                             onClick={() => openCheckout(link.id)}
+                            title="Visualizar checkout"
                           >
-                            <ExternalLink className="h-4 w-4" />
+                            <ExternalLink className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDeleteLink(link.id)}
+                            className="h-8 w-8 hover:text-destructive"
+                            onClick={() => handleDelete(link.id)}
+                            title="Excluir link"
                           >
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
-                  {links.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center text-muted-foreground py-8"
-                      >
-                        Nenhum link de pagamento encontrado
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </>
-              )}
-            </TableBody>
-          </Table>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
-      {/* New Link Dialog */}
+      {/* Create Payment Link Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="h-5 w-5" />
-              Criar Novo Link
+              <Plus className="h-5 w-5 text-emerald-500" />
+              Criar Link de Pagamento
             </DialogTitle>
             <DialogDescription>
-              Preencha os dados para criar um novo link de pagamento
+              Preencha os dados abaixo para gerar um novo link de pagamento para
+              seus clientes.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+
+          <div className="space-y-4 py-2">
+            {/* Title */}
             <div className="space-y-2">
-              <Label>Título do Link</Label>
+              <Label htmlFor="link-title">Título</Label>
               <Input
+                id="link-title"
                 placeholder="Ex: Plano Mensal Premium"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
+                value={formTitle}
+                onChange={(e) => setFormTitle(e.target.value)}
               />
             </div>
+
+            {/* Description (optional) */}
             <div className="space-y-2">
-              <Label>Descrição (opcional)</Label>
+              <Label htmlFor="link-description">
+                Descrição <span className="text-muted-foreground font-normal">(opcional)</span>
+              </Label>
               <Textarea
+                id="link-description"
                 placeholder="Descreva o produto ou serviço"
-                value={newDescription}
-                onChange={(e) => setNewDescription(e.target.value)}
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
                 rows={3}
               />
             </div>
+
+            {/* Currency + Amount row */}
             <div className="flex gap-4">
-              <div className="space-y-2 flex-1">
+              <div className="space-y-2 w-[140px] shrink-0">
                 <Label>Moeda</Label>
-                <Select value={newCurrency} onValueChange={setNewCurrency}>
+                <Select
+                  value={formCurrency}
+                  onValueChange={(v) => setFormCurrency(v as "BRL" | "EUR")}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="BRL">BRL - Real</SelectItem>
-                    <SelectItem value="EUR">EUR - Euro</SelectItem>
+                    <SelectItem value="BRL">BRL — Real</SelectItem>
+                    <SelectItem value="EUR">EUR — Euro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2 flex-1">
-                <Label>Valor</Label>
+                <Label htmlFor="link-amount">Valor</Label>
                 <Input
+                  id="link-amount"
                   type="number"
                   placeholder="0,00"
-                  min="0"
+                  min="0.01"
                   step="0.01"
-                  value={newAmount}
-                  onChange={(e) => setNewAmount(e.target.value)}
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
                 />
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDialogOpen(false);
+                resetForm();
+              }}
+            >
               Cancelar
             </Button>
             <Button
-              onClick={handleCreateLink}
-              disabled={!newTitle.trim() || !newAmount || creating}
+              onClick={handleCreate}
+              disabled={!formTitle.trim() || !formAmount || parseFloat(formAmount) <= 0 || creating}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {creating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Criar Link

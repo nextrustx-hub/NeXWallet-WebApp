@@ -25,15 +25,14 @@ import { ArrowDownUp, Maximize2, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { BalanceData } from "@/lib/api";
 
-// --- Formatting helpers ---
+// ─── Formatting helpers ────────────────────────────────────────────────
+
 const formatBRL = (v: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
-    v
-  );
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+
 const formatEUR = (v: number) =>
-  new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(
-    v
-  );
+  new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(v);
+
 const formatCrypto = (v: number) =>
   v.toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
@@ -47,19 +46,21 @@ const formatValue = (v: number, currency: string) => {
     case "EUR":
       return formatEUR(v);
     default:
-      return formatCrypto(v);
+      return `${formatCrypto(v)} ${currency}`;
   }
 };
 
-// --- Currency meta ---
+// ─── Currency meta ─────────────────────────────────────────────────────
+
 const currencies = [
-  { value: "BRL", label: "BRL", symbol: "R$", flag: "\uD83C\uDDE7\uD83C\uDDF7" },
-  { value: "EUR", label: "EUR", symbol: "\u20AC", flag: "\uD83C\uDDEA\uD83C\uDDFA" },
-  { value: "USDT", label: "USDT", symbol: "\u20B4", flag: "\uD83C\uDDFA\uD83C\uDDF8" },
-  { value: "BTC", label: "BTC", symbol: "\u20BF", flag: "\uD83D\uDFE3" },
+  { value: "BRL", label: "BRL", symbol: "R$", flag: "🇧🇷" },
+  { value: "EUR", label: "EUR", symbol: "€", flag: "🇪🇺" },
+  { value: "USDT", label: "USDT", symbol: "₮", flag: "🇺🇸" },
+  { value: "BTC", label: "BTC", symbol: "₿", flag: "🟠" },
 ] as const;
 
-// --- Mock rate calculation (estimate for display) ---
+// ─── Local rate estimation for display only (real rate applied server-side) ──
+
 const getRate = (from: string, to: string): number => {
   if (from === to) return 1;
   const rates: Record<string, Record<string, number>> = {
@@ -70,6 +71,19 @@ const getRate = (from: string, to: string): number => {
   };
   return (rates[from]?.[to] ?? 1) * 0.995; // 0.5% fee
 };
+
+const getRawRate = (from: string, to: string): number => {
+  if (from === to) return 1;
+  const rates: Record<string, Record<string, number>> = {
+    BRL: { EUR: 0.18, USDT: 0.2, BTC: 0.000003 },
+    EUR: { BRL: 5.5, USDT: 1.1, BTC: 0.000015 },
+    USDT: { BRL: 5.0, EUR: 0.91, BTC: 0.000014 },
+    BTC: { BRL: 340000, EUR: 62000, USDT: 68000 },
+  };
+  return rates[from]?.[to] ?? 1;
+};
+
+// ─── Component ─────────────────────────────────────────────────────────
 
 export function ExchangePage() {
   const [fromCurrency, setFromCurrency] = useState("BRL");
@@ -89,7 +103,9 @@ export function ExchangePage() {
   const loadBalances = useCallback(async () => {
     try {
       const res = await api.getBalance();
-      setBalances(res.data);
+      if (res.balances) {
+        setBalances(res.balances);
+      }
     } catch {
       // Silently fail – balances stay at 0
     } finally {
@@ -104,23 +120,15 @@ export function ExchangePage() {
   const parsedAmount = parseFloat(fromAmount) || 0;
 
   const rate = useMemo(() => getRate(fromCurrency, toCurrency), [fromCurrency, toCurrency]);
-  const rawRate = useMemo(() => {
-    if (fromCurrency === toCurrency) return 1;
-    const rates: Record<string, Record<string, number>> = {
-      BRL: { EUR: 0.18, USDT: 0.2, BTC: 0.000003 },
-      EUR: { BRL: 5.5, USDT: 1.1, BTC: 0.000015 },
-      USDT: { BRL: 5.0, EUR: 0.91, BTC: 0.000014 },
-      BTC: { BRL: 340000, EUR: 62000, USDT: 68000 },
-    };
-    return rates[fromCurrency]?.[toCurrency] ?? 1;
-  }, [fromCurrency, toCurrency]);
-
+  const rawRate = useMemo(() => getRawRate(fromCurrency, toCurrency), [fromCurrency, toCurrency]);
   const convertedAmount = useMemo(() => parsedAmount * rate, [parsedAmount, rate]);
 
   const availableBalance = balances[fromCurrency as keyof BalanceData] ?? 0;
 
   const handleMax = () => {
-    setFromAmount(String(availableBalance));
+    if (availableBalance > 0) {
+      setFromAmount(String(availableBalance));
+    }
   };
 
   const handleSwap = () => {
@@ -128,9 +136,8 @@ export function ExchangePage() {
     const prevTo = toCurrency;
     setFromCurrency(prevTo);
     setToCurrency(prevFrom);
-    // Swap amounts using the converted value
-    if (parsedAmount > 0) {
-      setFromAmount(convertedAmount > 0 ? String(convertedAmount) : "");
+    if (parsedAmount > 0 && convertedAmount > 0) {
+      setFromAmount(String(convertedAmount));
     }
   };
 
@@ -139,12 +146,14 @@ export function ExchangePage() {
 
     setSwapLoading(true);
     try {
-      await api.swap(fromCurrency, toCurrency, parsedAmount);
-      toast.success("Convers\u00e3o realizada com sucesso!");
+      const res = await api.swap(fromCurrency, toCurrency, parsedAmount);
+      toast.success(
+        `Conversão realizada! Você recebeu ${formatValue(res.to_amount, toCurrency)}`,
+      );
       setFromAmount("");
       await loadBalances();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Erro na convers\u00e3o.";
+      const message = err instanceof Error ? err.message : "Erro na conversão.";
       toast.error(message);
     } finally {
       setSwapLoading(false);
@@ -167,10 +176,10 @@ export function ExchangePage() {
         </CardHeader>
 
         <CardContent className="space-y-2">
-          {/* Block 1: Pagar (From) */}
+          {/* Block 1: Você envia (From) */}
           <div className="bg-muted/50 rounded-xl p-4 space-y-3">
             <Label className="text-sm font-medium text-muted-foreground">
-              Voc\u00ea envia
+              Você envia
             </Label>
 
             <div className="flex items-center gap-3">
@@ -202,6 +211,7 @@ export function ExchangePage() {
                   variant="ghost"
                   size="sm"
                   onClick={handleMax}
+                  disabled={loading}
                   className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2 text-xs font-medium text-primary hover:text-primary/80"
                 >
                   <Maximize2 className="size-3 mr-1" />
@@ -211,16 +221,18 @@ export function ExchangePage() {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Dispon&iacute;vel:{" "}
+              Disponível:{" "}
               {loading ? (
                 <Skeleton className="inline-block h-4 w-24 align-middle" />
               ) : (
-                <span className="font-medium">{formatValue(availableBalance, fromCurrency)}</span>
+                <span className="font-medium">
+                  {formatValue(availableBalance, fromCurrency)}
+                </span>
               )}
             </p>
           </div>
 
-          {/* Swap Button */}
+          {/* Swap Direction Button */}
           <div className="flex justify-center -my-1 relative z-10">
             <Button
               variant="outline"
@@ -232,10 +244,10 @@ export function ExchangePage() {
             </Button>
           </div>
 
-          {/* Block 2: Receber (To) */}
+          {/* Block 2: Você recebe (To) */}
           <div className="bg-muted/50 rounded-xl p-4 space-y-3">
             <Label className="text-sm font-medium text-muted-foreground">
-              Voc&ecirc; recebe
+              Você recebe
             </Label>
 
             <div className="flex items-center gap-3">
@@ -256,7 +268,9 @@ export function ExchangePage() {
               <Input
                 type="text"
                 readOnly
-                value={parsedAmount > 0 ? formatValue(convertedAmount, toCurrency) : ""}
+                value={
+                  parsedAmount > 0 ? formatValue(convertedAmount, toCurrency) : ""
+                }
                 placeholder="0,00"
                 className="flex-1 text-right text-lg font-semibold h-11 bg-muted/30 cursor-not-allowed"
               />
@@ -274,15 +288,17 @@ export function ExchangePage() {
           <div className="pt-2 space-y-2">
             <Separator />
             <div className="flex items-center justify-between text-sm py-1">
-              <span className="text-muted-foreground">Taxa de convers&atilde;o</span>
+              <span className="text-muted-foreground">Taxa de conversão</span>
               <span className="font-medium">0.5%</span>
             </div>
             <div className="flex items-center justify-between text-sm py-1">
-              <span className="text-muted-foreground">Valor estimado a receber</span>
+              <span className="text-muted-foreground">
+                Valor estimado a receber
+              </span>
               <span className="font-semibold text-foreground">
                 {parsedAmount > 0
                   ? formatValue(convertedAmount, toCurrency)
-                  : "\u2014"}
+                  : "—"}
               </span>
             </div>
           </div>
@@ -302,8 +318,8 @@ export function ExchangePage() {
                 </>
               ) : parsedAmount > 0 && fromCurrency !== toCurrency ? (
                 <>
-                  Converter{" "}
-                  {formatValue(parsedAmount, fromCurrency)} para {toCurrency}
+                  Converter {formatValue(parsedAmount, fromCurrency)} para{" "}
+                  {toCurrency}
                 </>
               ) : (
                 "Converter"

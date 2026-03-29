@@ -57,18 +57,18 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r-0">
-      <SidebarHeader className="p-3">
-        <div className="flex items-center gap-2.5 px-2 py-1.5">
+      <SidebarHeader className="p-3 overflow-hidden">
+        <div className="flex items-center gap-2.5 px-2 py-1.5 min-w-0">
           <img
             src="/logo.png"
             alt="NeXWallet"
-            className="h-8 w-8 rounded-lg object-contain shrink-0 group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:w-8"
+            className="h-8 w-8 rounded-lg object-contain shrink-0"
           />
-          <div className="group-data-[collapsible=icon]:hidden flex flex-col">
-            <span className="text-sm font-bold text-sidebar-foreground tracking-tight">
+          <div className="group-data-[collapsible=icon]:hidden flex flex-col min-w-0">
+            <span className="text-sm font-bold text-sidebar-foreground tracking-tight truncate">
               NeXWallet
             </span>
-            <span className="text-[10px] text-sidebar-foreground/50 tracking-wider uppercase">
+            <span className="text-[10px] text-sidebar-foreground/50 tracking-wider uppercase truncate">
               by NeXTrustX
             </span>
           </div>
